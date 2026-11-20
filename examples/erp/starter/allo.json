@@ -1,0 +1,15 @@
+{
+  "plugins": [
+    "./plugins/stock-summary.ts",
+    {
+      "path": "./plugins/erp.ts",
+      "config": { "connection": "erp-demo" }
+    }
+  ],
+  "connections": {
+    "erp-demo": {
+      "destination": "http://127.0.0.1:7341/",
+      "credentialEnv": "ALLO_FIXTURE_TOKEN"
+    }
+  }
+}

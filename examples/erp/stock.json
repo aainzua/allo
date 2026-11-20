@@ -1,0 +1,6 @@
+{
+  "A42": [
+    { "warehouse": "Bilbao", "quantity": 11 },
+    { "warehouse": "Madrid", "quantity": 7 }
+  ]
+}
