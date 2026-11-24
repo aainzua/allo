@@ -5,6 +5,7 @@ import { isBuiltin } from 'node:module'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { build } from 'esbuild'
 import manifest from '../package.json' with { type: 'json' }
+import { bundledPlugins } from './bundled.js'
 import {
   AlloError, connectionConflicts, isRecord, parseJson, profileName,
   projectPath, readJson, sourcePath, validateProfile,
@@ -74,7 +75,7 @@ function putFile(files, seen, name, bytes) {
 export async function exportSnapshot(profile, destination) {
   const files = new Map()
   const seen = new Map()
-  const entries = profile.plugins.map(plugin => plugin.path)
+  const entries = profile.plugins.filter(plugin => !plugin.plugin).map(plugin => plugin.path)
   const paths = new Set([...entries, ...(profile.data.snapshotFiles ?? [])])
   const externalPackages = new Set()
   for (const name of entries) await sourcePath(profile.root, name)
@@ -123,7 +124,18 @@ export async function exportSnapshot(profile, destination) {
     putFile(files, seen, name, bytes)
     putFile(files, seen, canonical, bytes)
   }
-  const profileBytes = Buffer.from(JSON.stringify(profile.data, null, 2) + '\n')
+  const snapshotPlugins = await Promise.all(profile.plugins.map(async (entry, index) => {
+    if (!entry.plugin) return profile.data.plugins[index]
+    const { plugin, ...config } = entry
+    const bytes = await readFile(bundledPlugins[plugin])
+    const path = `.allo/bundled/${plugin}-${hash(bytes)}.ts`
+    if (seen.has(path.toLowerCase()) && !files.get(path)?.equals(bytes)) {
+      throw new AlloError('snapshot_path_conflict', 'Bundled plugin source conflicts with a local file', { path })
+    }
+    putFile(files, seen, path, bytes)
+    return { ...config, path }
+  }))
+  const profileBytes = Buffer.from(JSON.stringify({ ...profile.data, plugins: snapshotPlugins }, null, 2) + '\n')
   putFile(files, seen, profileName, profileBytes)
   validateDependencies(files)
   const packageFile = files.get('package.json')
@@ -173,7 +185,7 @@ export async function restoreSnapshot(input, destination, localConnections) {
   if (!isRecord(snapshot) || snapshot.format !== format || !Array.isArray(snapshot.files)) {
     throw new AlloError('invalid_snapshot', 'Unsupported snapshot format')
   }
-  if (snapshot.alloVersion !== manifest.version) {
+  if (![manifest.version, '0.1.0'].includes(snapshot.alloVersion)) {
     throw new AlloError('incompatible_snapshot', 'Restore this snapshot with its recorded Allo version', {
       required: snapshot.alloVersion, running: manifest.version,
     })

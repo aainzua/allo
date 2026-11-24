@@ -1,0 +1,14 @@
+{
+  "plugins": [
+    {
+      "plugin": "jira",
+      "config": { "connection": "jira" }
+    }
+  ],
+  "connections": {
+    "jira": {
+      "destination": "https://your-team.atlassian.net/",
+      "credentialEnv": "ALLO_JIRA_TOKEN"
+    }
+  }
+}

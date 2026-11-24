@@ -1,2 +1,3 @@
 node_modules/
 *.allo-snapshot.json
+examples/jira/allo.json

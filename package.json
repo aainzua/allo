@@ -1,9 +1,9 @@
 {
   "name": "allo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "bin": { "allo": "./src/cli.js" },
-  "files": ["src", "examples", "GLOSSARY.md", "docs/adr"],
+  "files": ["src", "examples/erp", "examples/jira/allo.example.json", "GLOSSARY.md", "docs/adr"],
   "exports": { "types": "./src/plugin.d.ts", "default": "./src/plugin.js" },
   "engines": { "node": ">=22.18.0" },
   "scripts": { "test": "node --test" },

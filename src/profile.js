@@ -1,6 +1,7 @@
 import { readFile, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { bundledPlugins } from './bundled.js'
 
 export const profileName = 'allo.json'
 
@@ -77,6 +78,12 @@ export function validateProfile(data, path) {
   const plugins = data.plugins.map(entry => {
     const plugin = typeof entry === 'string' ? { path: entry } : entry
     if (!isRecord(plugin)) throw new AlloError('invalid_profile', 'Invalid plugin entry', { path })
+    if (Object.hasOwn(plugin, 'plugin')) {
+      if (typeof plugin.plugin !== 'string' || !Object.hasOwn(bundledPlugins, plugin.plugin) || Object.hasOwn(plugin, 'path')) {
+        throw new AlloError('invalid_profile', 'Select a known bundled plugin by name or a local plugin by path', { plugin: plugin.plugin })
+      }
+      return plugin
+    }
     const entryPath = projectPath(root, plugin.path)
     if (!/\.(?:[cm]?[jt]s)$/.test(entryPath)) {
       throw new AlloError('invalid_profile', 'Plugin entry points must be TypeScript or JavaScript files', { plugin: plugin.path })
@@ -135,7 +142,7 @@ export function connectionResolver(profile, local, mappings) {
       throw new AlloError('invalid_connection_mapping', 'A mapping must link a profile connection to a local connection', { connection: name, target })
     }
   }
-  return name => {
+  return (name, options) => {
     if (!Object.hasOwn(profile.connections, name)) {
       throw new AlloError('connection_not_found', `Connection ${name} is missing from the profile`, { connection: name })
     }
@@ -146,9 +153,9 @@ export function connectionResolver(profile, local, mappings) {
     const connection = Object.hasOwn(local, target) ? local[target] : profile.connections[name]
     const variable = connection.credentialEnv ?? profile.connections[name].credentialEnv
     const credential = variable ? process.env[variable] : undefined
-    if (variable && !credential) {
+    if (variable && !credential && options?.requireCredential !== false) {
       throw new AlloError('credentials_missing', `Configure credentials for ${name}`, { connection: name, credentialEnv: variable })
     }
-    return { destination: connection.destination, credential }
+    return { destination: connection.destination, credential, credentialEnv: variable, name: target }
   }
 }

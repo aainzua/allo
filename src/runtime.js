@@ -3,6 +3,8 @@ import Ajv from 'ajv'
 import { Context, FiberState, Logger } from 'cordis'
 import { tsImport } from 'tsx/esm/api'
 import { AlloError, sourcePath } from './profile.js'
+import { bundledPlugins } from './bundled.js'
+import { credentialStore } from './credentials.js'
 
 const qualifiedName = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/
 
@@ -24,10 +26,11 @@ function register(ctx, registry, name, entry) {
   })
 }
 
-export async function boot(profile, resolveConnection) {
+export async function boot(profile, resolveConnection, logins = credentialStore) {
   const root = new Context()
   const operations = new Map()
   const services = new Map()
+  const accounts = new Map()
   const sources = new Map()
   const issues = []
   const ajv = new Ajv({ allErrors: true, addUsedSchema: false })
@@ -47,13 +50,13 @@ export async function boot(profile, resolveConnection) {
     operation(ctx, spec, handler) {
       checkDescription(spec.name, spec.description)
       const plugin = pluginPath(ctx)
-      const { name, description, inputSchema, resultSchema, connections = [] } = structuredClone(spec)
+      const { name, description, inputSchema, resultSchema, connections = [], requireCredential = true } = structuredClone(spec)
       if (!Array.isArray(connections) || connections.some(name => typeof name !== 'string') ||
           typeof handler !== 'function') {
         throw new TypeError('An operation requires a handler and a list of connection names')
       }
       register(ctx, operations, name, {
-        ctx, plugin, name, description, inputSchema, resultSchema, connections, handler,
+        ctx, plugin, name, description, inputSchema, resultSchema, connections, requireCredential, handler,
         validateInput: ajv.compile(inputSchema),
         validateResult: ajv.compile(resultSchema),
       })
@@ -70,6 +73,10 @@ export async function boot(profile, resolveConnection) {
       })
     },
     connection: resolveConnection,
+    logins,
+    account(ctx, name, provider) {
+      register(ctx, accounts, name, { ctx, plugin: pluginPath(ctx), provider })
+    },
     error: (code, message, details) => new AlloError(code, message, details),
   })
 
@@ -77,8 +84,9 @@ export async function boot(profile, resolveConnection) {
     // Import before mounting so the catalog reflects a single composed Cordis context.
     const loaded = []
     for (const entry of profile.plugins) {
+      const label = entry.plugin ?? entry.path
       try {
-        const url = pathToFileURL(await sourcePath(profile.root, entry.path)).href
+        const url = pathToFileURL(entry.plugin ? bundledPlugins[entry.plugin] : await sourcePath(profile.root, entry.path)).href
         const module = await tsImport(url, import.meta.url)
         // tsx transforms TypeScript in CommonJS packages into a default-export wrapper.
         const exported = module.default
@@ -87,15 +95,16 @@ export async function boot(profile, resolveConnection) {
           : exported
         loaded.push({ entry, component })
       } catch (error) {
-        issues.push({ plugin: entry.path, code: 'plugin_load_failed', message: String(error.message ?? error) })
+        issues.push({ plugin: label, code: 'plugin_load_failed', message: String(error.message ?? error) })
       }
     }
     for (const { entry, component } of loaded) {
+      const label = entry.plugin ?? entry.path
       try {
         const fiber = root.use(component, entry.config ?? {})
-        sources.set(fiber.ctx.fiber, entry.path)
+        sources.set(fiber.ctx.fiber, label)
       } catch (error) {
-        issues.push({ plugin: entry.path, code: 'plugin_load_failed', message: String(error.message ?? error) })
+        issues.push({ plugin: label, code: 'plugin_load_failed', message: String(error.message ?? error) })
       }
     }
 
@@ -139,12 +148,12 @@ export async function boot(profile, resolveConnection) {
     if (!entries.length) throw new AlloError(`${kind}_not_found`, `Unknown ${kind} ${name}`, { name })
     const state = availability(entries)
     if (entries.length > 1) return { name, ...state }
-    const { description, plugin, connections, inputSchema, resultSchema, usage } = entries[0]
+    const { description, plugin, connections, inputSchema, resultSchema, usage, requireCredential } = entries[0]
     const info = { name, description, plugin, ...state }
     if (kind === 'operation') {
       if (state.available) {
         try {
-          for (const connection of connections) resolveConnection(connection)
+          for (const connection of connections) resolveConnection(connection, { requireCredential })
         } catch (error) {
           info.available = false
           info.issue = { code: error.code, ...error.details }
@@ -167,6 +176,12 @@ export async function boot(profile, resolveConnection) {
       }
     },
     describe: (kind, name) => metadata(kind, name, true),
+    account(name) {
+      const entries = entriesFor(accounts, name).filter(entry => entry.ctx.fiber.state === FiberState.ACTIVE)
+      if (!entries.length) throw new AlloError('login_connection_not_found', 'No active login provider uses this connection', { connection: name })
+      if (entries.length > 1) throw new AlloError('registration_conflict', 'Multiple login providers use this connection', { connection: name })
+      return entries[0].provider
+    },
     async call(name, input) {
       const entries = entriesFor(operations, name)
       if (!entries.length) throw new AlloError('operation_not_found', `Unknown operation ${name}`, { name })
@@ -176,7 +191,7 @@ export async function boot(profile, resolveConnection) {
       if (!entry.validateInput(input)) {
         throw new AlloError('invalid_input', `Input does not match the schema for ${name}`, entry.validateInput.errors)
       }
-      for (const connection of entry.connections) resolveConnection(connection)
+      for (const connection of entry.connections) resolveConnection(connection, { requireCredential: entry.requireCredential })
       const value = await entry.handler(input)
       let result
       try {

@@ -11,6 +11,9 @@ const usage = [
   'allo call <operation> [--input-file <path>]',
   'allo snapshot export <file>',
   'allo snapshot restore <file> [--to <directory>]',
+  'allo login <connection> --email <email> [--token-file <path>]',
+  'allo status <connection>',
+  'allo logout <connection>',
 ]
 
 function argumentsFor(argv) {
@@ -24,6 +27,8 @@ function argumentsFor(argv) {
         'map-connection': { type: 'string', multiple: true },
         'input-file': { type: 'string' },
         to: { type: 'string' },
+        email: { type: 'string' },
+        'token-file': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
@@ -33,12 +38,16 @@ function argumentsFor(argv) {
   }
 }
 
-async function readInput(file) {
-  if (file !== undefined) return parseJson(await readFile(file, 'utf8'), file)
-  if (process.stdin.isTTY) return {}
+async function readStdin() {
+  if (process.stdin.isTTY) return ''
   const chunks = []
   for await (const chunk of process.stdin) chunks.push(chunk)
-  const source = Buffer.concat(chunks).toString('utf8')
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+async function readInput(file) {
+  if (file !== undefined) return parseJson(await readFile(file, 'utf8'), file)
+  const source = await readStdin()
   return source.trim() ? parseJson(source, 'stdin') : {}
 }
 
@@ -53,9 +62,13 @@ async function run(argv) {
   const discover = command === 'discover' && positionals.length === 1
   const describe = command === 'describe' && ['operation', 'service'].includes(kind) && positionals.length === 3
   const call = command === 'call' && positionals.length === 2
+  const account = ['login', 'status', 'logout'].includes(command) && positionals.length === 2
+  const login = account && command === 'login'
   const snapshot = command === 'snapshot' && ['export', 'restore'].includes(kind) && positionals.length === 3
-  if ((!discover && !describe && !call && !snapshot) ||
+  if ((!discover && !describe && !call && !snapshot && !account) ||
       (values['input-file'] !== undefined && !call) ||
+      ((values.email !== undefined || values['token-file'] !== undefined) && !login) ||
+      (login && !values.email?.trim()) ||
       (values.to !== undefined && !(snapshot && kind === 'restore')) ||
       (snapshot && (values['map-connection'] || (kind === 'restore' && values.profile)))) {
     throw new AlloError('invalid_arguments', 'Invalid command or options', { usage })
@@ -83,6 +96,14 @@ async function run(argv) {
   try {
     if (discover) return runtime.discover()
     if (describe) return runtime.describe(kind, name)
+    if (account) {
+      const provider = runtime.account(kind)
+      if (!login) return await provider[command]()
+      const file = values['token-file']
+      const token = (file === undefined ? await readStdin() : await readFile(file, 'utf8')).trim()
+      if (!token) throw new AlloError('credentials_missing', 'Provide the API token on stdin or through --token-file')
+      return await provider.login(values.email.trim(), token)
+    }
     return await runtime.call(kind, input)
   } finally {
     await runtime.close()
