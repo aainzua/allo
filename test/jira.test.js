@@ -80,10 +80,16 @@ test('Jira writes ADF and applies the requested transition once', async t => {
     },
     customfield_12345: { id: '6' },
   })
-  assert.deepEqual(await runtime.call('jira.transition-issue', { key: 'DEMO-1', transitionId: '17', fields: { resolution: { id: '1' } } }), { ok: true })
+  assert.deepEqual(await runtime.call('jira.transition-issue', {
+    key: 'DEMO-1', transitionId: '17', fields: { resolution: { id: '1' } },
+    update: { worklog: [{ add: { timeSpent: '5m' } }] },
+  }), { ok: true })
   assert.deepEqual(calls[1], {
     path: '/rest/api/3/issue/DEMO-1/transitions', method: 'POST',
-    body: { transition: { id: '17' }, fields: { resolution: { id: '1' } } },
+    body: {
+      transition: { id: '17' }, fields: { resolution: { id: '1' } },
+      update: { worklog: [{ add: { timeSpent: '5m' } }] },
+    },
   })
   await assert.rejects(runtime.call('jira.add-comment', { key: 'DEMO-1', body: 'Verify me' }),
     error => error.code === 'outcome_unknown')

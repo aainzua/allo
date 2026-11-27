@@ -2,7 +2,7 @@ import { pathToFileURL } from 'node:url'
 import Ajv from 'ajv'
 import { Context, FiberState, Logger } from 'cordis'
 import { tsImport } from 'tsx/esm/api'
-import { AlloError, sourcePath } from './profile.js'
+import { AlloError, pluginSource } from './profile.js'
 import { bundledPlugins } from './bundled.js'
 import { credentialStore } from './credentials.js'
 
@@ -84,22 +84,21 @@ export async function boot(profile, resolveConnection, logins = credentialStore)
     // Import before mounting so the catalog reflects a single composed Cordis context.
     const loaded = []
     for (const entry of profile.plugins) {
-      const label = entry.plugin ?? entry.path
+      const label = entry.plugin ?? (entry.install ? `${entry.install.catalog}/${entry.install.name}` : entry.path)
       try {
-        const url = pathToFileURL(entry.plugin ? bundledPlugins[entry.plugin] : await sourcePath(profile.root, entry.path)).href
+        const url = pathToFileURL(entry.plugin ? bundledPlugins[entry.plugin] : await pluginSource(profile.root, entry)).href
         const module = await tsImport(url, import.meta.url)
         // tsx transforms TypeScript in CommonJS packages into a default-export wrapper.
         const exported = module.default
         const component = exported?.__esModule === true && Object.hasOwn(exported, 'default')
           ? exported.default
           : exported
-        loaded.push({ entry, component })
+        loaded.push({ entry, component, label })
       } catch (error) {
         issues.push({ plugin: label, code: 'plugin_load_failed', message: String(error.message ?? error) })
       }
     }
-    for (const { entry, component } of loaded) {
-      const label = entry.plugin ?? entry.path
+    for (const { entry, component, label } of loaded) {
       try {
         const fiber = root.use(component, entry.config ?? {})
         sources.set(fiber.ctx.fiber, label)

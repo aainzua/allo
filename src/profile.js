@@ -1,9 +1,14 @@
 import { readFile, realpath } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { bundledPlugins } from './bundled.js'
 
 export const profileName = 'allo.json'
+export const catalogName = /^[a-z][a-z0-9-]*$/
+export const digestPattern = /^[a-f0-9]{64}$/
+export const pluginDigest = bytes => createHash('sha256').update(bytes).digest('hex')
+export const managedPath = digest => `.allo/plugins/${digest}/index.ts`
 
 export class AlloError extends Error {
   constructor(code, message, details) {
@@ -51,6 +56,15 @@ export async function sourcePath(root, path) {
   return physicalPath
 }
 
+export async function pluginSource(root, plugin) {
+  const path = await sourcePath(root, plugin.path)
+  const digest = plugin.install?.sha256 ?? plugin.bundledRevision?.sha256
+  if (digest && pluginDigest(await readFile(path)) !== digest) {
+    throw new AlloError('plugin_integrity_failed', 'Installed plugin source does not match its profile pin', { path: plugin.path })
+  }
+  return path
+}
+
 function validateConnections(connections, label) {
   if (!isRecord(connections)) throw new AlloError('invalid_connections', `Invalid connections in ${label}`)
   for (const [name, connection] of Object.entries(connections)) {
@@ -75,6 +89,24 @@ export function validateProfile(data, path) {
     throw new AlloError('invalid_profile', 'A profile requires a plugins array and may specify a snapshotFiles array', { path })
   }
   const root = dirname(path)
+  if (data.catalogs !== undefined && !isRecord(data.catalogs)) {
+    throw new AlloError('invalid_profile', 'Catalogs must be a map of names to sources')
+  }
+  for (const [name, entry] of Object.entries(data.catalogs ?? {})) {
+    if (!catalogName.test(name) || name === 'bundled' || !isRecord(entry) ||
+        Object.keys(entry).some(key => key !== 'source' && key !== 'credentialEnv') ||
+        typeof entry.source !== 'string' || !entry.source ||
+        (entry.credentialEnv !== undefined &&
+         (typeof entry.credentialEnv !== 'string' || !/^[A-Z_][A-Z0-9_]*$/.test(entry.credentialEnv)))) {
+      throw new AlloError('invalid_catalog', 'Invalid catalog source configuration', { catalog: name })
+    }
+    const remote = /^\w+:\/\//.test(entry.source)
+    const url = remote ? URL.parse(entry.source) : undefined
+    if ((remote && (!url || url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)) ||
+        (!remote && entry.credentialEnv)) {
+      throw new AlloError('invalid_catalog', 'Use an HTTPS source without URL credentials, or a local catalog file', { catalog: name })
+    }
+  }
   const plugins = data.plugins.map(entry => {
     const plugin = typeof entry === 'string' ? { path: entry } : entry
     if (!isRecord(plugin)) throw new AlloError('invalid_profile', 'Invalid plugin entry', { path })
@@ -85,6 +117,25 @@ export function validateProfile(data, path) {
       return plugin
     }
     const entryPath = projectPath(root, plugin.path)
+    if (plugin.bundledRevision !== undefined) {
+      const pin = plugin.bundledRevision
+      if (!isRecord(pin) || typeof pin.name !== 'string' || !catalogName.test(pin.name) ||
+          typeof pin.sha256 !== 'string' || !digestPattern.test(pin.sha256) ||
+          plugin.install !== undefined || plugin.path !== `.allo/bundled/${pin.name}-${pin.sha256}.ts`) {
+        throw new AlloError('invalid_profile', 'Invalid bundled plugin revision', { path: plugin.path })
+      }
+    }
+    if (plugin.install !== undefined) {
+      const pin = plugin.install
+      if (!isRecord(pin) || typeof pin.catalog !== 'string' || !catalogName.test(pin.catalog) ||
+          typeof pin.name !== 'string' || !catalogName.test(pin.name) || typeof pin.version !== 'string' ||
+          typeof pin.origin !== 'string' || !pin.origin ||
+          typeof pin.sha256 !== 'string' || !digestPattern.test(pin.sha256) ||
+          plugin.path !== managedPath(pin.sha256) || !Array.isArray(pin.requires) ||
+          pin.requires.some(name => typeof name !== 'string' || !/^[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*$/.test(name))) {
+        throw new AlloError('invalid_profile', 'Invalid installed plugin pin', { path: plugin.path })
+      }
+    }
     if (!/\.(?:[cm]?[jt]s)$/.test(entryPath)) {
       throw new AlloError('invalid_profile', 'Plugin entry points must be TypeScript or JavaScript files', { plugin: plugin.path })
     }

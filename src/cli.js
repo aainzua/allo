@@ -14,6 +14,8 @@ const usage = [
   'allo login <connection> --email <email> [--token-file <path>]',
   'allo status <connection>',
   'allo logout <connection>',
+  'allo catalog list | add <name> <source> [--credential-env <variable>] | remove <name>',
+  'allo plugin list | search [query] | add <plugin> [--release <version>] | update <plugin> | remove <plugin>',
 ]
 
 function argumentsFor(argv) {
@@ -29,6 +31,8 @@ function argumentsFor(argv) {
         to: { type: 'string' },
         email: { type: 'string' },
         'token-file': { type: 'string' },
+        'credential-env': { type: 'string' },
+        release: { type: 'string' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
@@ -53,7 +57,7 @@ async function readInput(file) {
 
 async function run(argv) {
   const { values, positionals } = argumentsFor(argv)
-  const [command, kind, name] = positionals
+  const [command, kind, name, source] = positionals
   if (values.version) return { version: manifest.version }
   if (values.help || !command) {
     return { usage, options: ['--profile <path>', '--connections <path>', '--map-connection <profile-name>=<local-name>'] }
@@ -65,7 +69,14 @@ async function run(argv) {
   const account = ['login', 'status', 'logout'].includes(command) && positionals.length === 2
   const login = account && command === 'login'
   const snapshot = command === 'snapshot' && ['export', 'restore'].includes(kind) && positionals.length === 3
-  if ((!discover && !describe && !call && !snapshot && !account) ||
+  const catalog = command === 'catalog' && positionals.length === ({ list: 2, add: 4, remove: 3 })[kind]
+  const plugin = command === 'plugin' && (kind === 'search'
+    ? positionals.length <= 3
+    : positionals.length === ({ list: 2, add: 3, update: 3, remove: 3 })[kind])
+  if ((!discover && !describe && !call && !snapshot && !account && !catalog && !plugin) ||
+      (values['credential-env'] !== undefined && !(catalog && kind === 'add')) ||
+      (values.release !== undefined && !(plugin && kind === 'add')) ||
+      ((catalog || plugin) && (values.connections !== undefined || values['map-connection'])) ||
       (values['input-file'] !== undefined && !call) ||
       ((values.email !== undefined || values['token-file'] !== undefined) && !login) ||
       (login && !values.email?.trim()) ||
@@ -78,6 +89,13 @@ async function run(argv) {
     const { exportSnapshot, restoreSnapshot } = await import('./snapshot.js')
     if (kind === 'export') return exportSnapshot(await loadProfile(values.profile), name)
     return restoreSnapshot(name, values.to, await loadConnections(values.connections))
+  }
+  if (catalog || plugin) {
+    const profile = await loadProfile(values.profile)
+    const { catalogCommand, pluginCommand } = await import('./catalog.js')
+    return catalog
+      ? catalogCommand(profile, kind, name, source, values['credential-env'])
+      : pluginCommand(profile, kind, name, values.release)
   }
 
   const mappings = new Map()

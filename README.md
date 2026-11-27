@@ -74,3 +74,25 @@ Use `allo describe operation <name>` to inspect schemas. Allo exposes the follow
 - Use `jira.list-transitions` to inspect valid transitions, their target status, and any required fields. Pass the selected transition ID and fields to `jira.transition-issue`.
 
 Descriptions and comments accept plain text or Atlassian Document Format. If a write returns `outcome_unknown`, check the issue in Jira before retrying.
+
+## Install plugins from catalogs
+
+Each profile can register several named catalogs. A catalog source is a local JSON file or an HTTPS URL. Register private sources by pointing to a local checkout or passing `--credential-env <variable>` for an HTTPS bearer token. The profile stores the variable name. Allo forwards the token only to the catalog origin.
+
+To try the bundled sample, run these commands from `examples/jira` with your `allo.json` in place.
+
+```sh
+allo catalog add sample ../catalog/catalog.json
+allo plugin search jira
+allo plugin add sample/jira-summary
+allo plugin list
+allo plugin update sample/jira-summary
+allo plugin remove sample/jira-summary
+allo catalog remove sample
+```
+
+The example uses bundled Jira as a dependency. On an empty profile, enable it with `allo plugin add bundled/jira`. For a local plugin, use `allo plugin add ./plugins/example.ts`. Local paths are relative to the selected profile. Choose a qualified catalog name whenever a short name matches more than one catalog. Use `--release <version>` to install a particular compatible release.
+
+The [sample catalog](examples/catalog/catalog.json) can seed a separate catalog repository. Each release declares its SemVer version, the compatible Allo version range, the source URL or path, the SHA-256 of the exact source bytes, and any required plugin IDs. The current artifact format is a standalone TypeScript file with built-in Node imports and Cordis service injection. Publish a new version and digest when the source changes.
+
+Install verifies the digest and pins the release in the profile. Update follows the original catalog. Remove disables the plugin in the selected profile and reports any declared dependents. Cached releases stay on disk so a failed profile change cannot remove an enabled revision. Snapshots carry the pinned source and can run without contacting the catalog.

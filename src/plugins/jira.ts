@@ -341,9 +341,9 @@ export default {
         },
       }, ['transitions'], true),
       ({ key }: { key: string }) => request(`${issuePath(key)}/transitions`, { query: { expand: 'transitions.fields' } }))
-    operation('transition-issue', 'Apply an available transition ID and supply any required transition fields.',
-      object({ ...key, transitionId: id, fields: fieldMap }, ['key', 'transitionId']), confirmed,
-      ({ key, transitionId, fields }: { key: string; transitionId: string; fields?: object }) =>
-        request(`${issuePath(key)}/transitions`, { method: 'POST', body: { transition: { id: transitionId }, fields }, noContent: true }))
+    operation('transition-issue', 'Apply an available transition ID and supply any required transition fields or update verbs, such as a worklog entry required by the transition screen.',
+      object({ ...key, transitionId: id, fields: fieldMap, update: fieldMap }, ['key', 'transitionId']), confirmed,
+      ({ key, transitionId, fields, update }: { key: string; transitionId: string; fields?: object; update?: object }) =>
+        request(`${issuePath(key)}/transitions`, { method: 'POST', body: { transition: { id: transitionId }, fields, update }, noContent: true }))
   },
 }

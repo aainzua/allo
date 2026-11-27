@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "type": "module",
   "bin": { "allo": "./src/cli.js" },
-  "files": ["src", "examples/erp", "examples/jira/allo.example.json", "GLOSSARY.md", "docs/adr"],
+  "files": ["src", "examples/erp", "examples/jira/allo.example.json", "examples/catalog/catalog.json", "examples/catalog/jira-summary.ts", "GLOSSARY.md", "docs/adr"],
   "exports": { "types": "./src/plugin.d.ts", "default": "./src/plugin.js" },
   "engines": { "node": ">=22.18.0" },
   "scripts": { "test": "node --test" },
@@ -11,6 +11,7 @@
     "ajv": "8.17.1",
     "cordis": "4.0.0-rc.13",
     "esbuild": "0.25.12",
+    "semver": "7.7.3",
     "tsx": "4.20.6"
   }
 }

@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "plugins": {
+    "jira-summary": {
+      "description": "Read a Jira issue summary using bundled Jira.",
+      "releases": [
+        {
+          "version": "1.0.0",
+          "allo": "^0.2.0",
+          "source": "./jira-summary.ts",
+          "sha256": "a4e736168a892c6ffd3097f82a6288bb36526cd8ea618b47970f2cecd096be3b",
+          "requires": ["bundled/jira"]
+        }
+      ]
+    }
+  }
+}

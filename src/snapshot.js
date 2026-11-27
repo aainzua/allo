@@ -8,7 +8,7 @@ import manifest from '../package.json' with { type: 'json' }
 import { bundledPlugins } from './bundled.js'
 import {
   AlloError, connectionConflicts, isRecord, parseJson, profileName,
-  projectPath, readJson, sourcePath, validateProfile,
+  pluginSource, projectPath, readJson, sourcePath, validateProfile,
 } from './profile.js'
 
 const format = 1
@@ -78,7 +78,7 @@ export async function exportSnapshot(profile, destination) {
   const entries = profile.plugins.filter(plugin => !plugin.plugin).map(plugin => plugin.path)
   const paths = new Set([...entries, ...(profile.data.snapshotFiles ?? [])])
   const externalPackages = new Set()
-  for (const name of entries) await sourcePath(profile.root, name)
+  for (const plugin of profile.plugins.filter(plugin => !plugin.plugin)) await pluginSource(profile.root, plugin)
   if (entries.length) {
     try {
       const result = await build({
@@ -128,12 +128,13 @@ export async function exportSnapshot(profile, destination) {
     if (!entry.plugin) return profile.data.plugins[index]
     const { plugin, ...config } = entry
     const bytes = await readFile(bundledPlugins[plugin])
-    const path = `.allo/bundled/${plugin}-${hash(bytes)}.ts`
+    const sha256 = hash(bytes)
+    const path = `.allo/bundled/${plugin}-${sha256}.ts`
     if (seen.has(path.toLowerCase()) && !files.get(path)?.equals(bytes)) {
       throw new AlloError('snapshot_path_conflict', 'Bundled plugin source conflicts with a local file', { path })
     }
     putFile(files, seen, path, bytes)
-    return { ...config, path }
+    return { ...config, path, bundledRevision: { name: plugin, sha256 } }
   }))
   const profileBytes = Buffer.from(JSON.stringify({ ...profile.data, plugins: snapshotPlugins }, null, 2) + '\n')
   putFile(files, seen, profileName, profileBytes)
@@ -208,6 +209,12 @@ export async function restoreSnapshot(input, destination, localConnections) {
   const profileBytes = files.get(profileName)
   if (!profileBytes) throw new AlloError('invalid_snapshot', 'Snapshot does not contain allo.json')
   const profile = validateProfile(parseJson(profileBytes.toString(), profileName), profilePath)
+  for (const plugin of profile.plugins.filter(plugin => plugin.install || plugin.bundledRevision)) {
+    const bytes = files.get(plugin.path)
+    if (!bytes || hash(bytes) !== (plugin.install ?? plugin.bundledRevision).sha256) {
+      throw new AlloError('plugin_integrity_failed', 'Snapshot source does not match its plugin pin', { path: plugin.path })
+    }
+  }
   for (const path of [...profile.plugins.map(plugin => plugin.path), ...(profile.data.snapshotFiles ?? [])]) {
     if (!files.has(checkSnapshotPath(root, path))) {
       throw new AlloError('invalid_snapshot', 'Snapshot is missing a configured source file', { path })
