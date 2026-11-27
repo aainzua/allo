@@ -1,6 +1,60 @@
 # Allo
 
-Allo is a local CLI for agents. TypeScript plugins use [Cordis](https://github.com/cordiverse/cordis) to provide services to each other and register operations for callers.
+Allo gives agents a single local command for working with systems such as Jira and ERP. A project chooses its capabilities in an `allo.json` **profile**. Plugins expose **operations** agents can call and **services** other plugins can reuse.
+
+## From a request to a result
+
+An agent can discover what a project supports, inspect the input and result schemas for an operation, and call it with JSON. For a familiar operation, it can call it directly.
+
+```mermaid
+flowchart LR
+    Agent["Agent or shell"] -->|"discover · describe · call"| CLI["Allo CLI"]
+    Profile["Profile · allo.json"] -->|"Selects plugins and connections"| CLI
+    CLI -->|"Validate input and dispatch once"| Operation["Operation"]
+    Operation -->|"Use a named connection when needed"| System["Jira, ERP, or another system"]
+    System -->|"Data or error"| Operation
+    Operation -->|"Validate result and return JSON"| CLI
+    CLI -->|"Result or structured error"| Agent
+```
+
+Allo gets its operation list from the plugins that load for the selected profile. If a plugin fails to load, discovery reports the failure and independent operations can still run.
+
+| Concept | The question it answers | Example |
+| --- | --- | --- |
+| Profile | What can Allo do in this project? | Enable plugins and configure their connections in `allo.json`. |
+| Operation | What can an agent call? | `summary.total-stock` accepts a SKU and returns a quantity. |
+| Service | What can a plugin reuse? | `erp.inventory` provides inventory lookup to other plugins. |
+| Connection | Which external destination should this plugin use? | `erp-demo` names the fixture ERP connection. |
+
+## How plugins compose
+
+The ERP starter enables two plugins. The ERP plugin provides the inventory service and knows how to fetch warehouse stock. The summary plugin depends on that service and exposes an operation that adds up the quantities. A new stock-by-warehouse plugin can use the same service with its own input and result schemas.
+
+```mermaid
+flowchart LR
+    Agent["Agent"] -->|"call summary.total-stock"| Summary["Stock summary plugin"]
+    Summary -->|"Requires erp.inventory"| Inventory["ERP plugin"]
+    Warehouse["Stock-by-warehouse plugin you add"] -.->|"Can reuse erp.inventory"| Inventory
+    Inventory -->|"Uses erp-demo connection"| ERP["ERP"]
+```
+
+Browse the [starter profile](examples/erp/starter/allo.json), the [ERP service](examples/erp/starter/plugins/erp.ts), and the [summary operation](examples/erp/starter/plugins/stock-summary.ts) to see the same composition in code.
+
+## Where plugins come from
+
+A profile can mix **bundled plugins** shipped with Allo, **local plugins** loaded from editable files, and **catalog plugins** installed from versioned releases. A catalog answers what's available to install. The selected profile determines what's enabled for this invocation.
+
+```mermaid
+flowchart LR
+    Bundled["Bundled plugin"] -->|"Enable by name"| Profile["Profile"]
+    Local["Local TypeScript file"] -->|"Enable by relative path"| Profile
+    Catalogs["Named catalogs"] -->|"Install a verified release"| Pin["Origin, version, and SHA-256"]
+    Pin --> Profile
+    Profile -->|"Export profile and source"| Snapshot["Portable snapshot"]
+    Snapshot -->|"Restore separately"| Restored["Editable restored project"]
+```
+
+Local source edits take effect on the next invocation. Catalog updates follow the pinned origin. A snapshot captures the sources needed to restore a composition, including bundled plugin revisions and unpublished edits. Credentials are supplied on the machine that runs it, and the restored operations can query current external data.
 
 ## Run the starter
 
@@ -30,7 +84,7 @@ Ask a coding agent to add a stock-by-warehouse lookup to the starter project. It
 2. Register the operation with its qualified name, JSON Schema input and result, and required connection. Add the entry point path to the profile’s `plugins` array.
 3. Run `allo discover` and `allo describe operation <name>` to check the registration. Then call the operation with SKU `A42` and warehouse `Bilbao`.
 
-Allo looks for the nearest `allo.json` above the working directory. Use `--profile <path>` to select a specific profile. Plugin paths are relative to that file. Each invocation loads the current source. A plugin can be a path string or an object with `path` and `config`. Cordis resolves service dependencies even when the consumer is listed first.
+Allo looks for the nearest `allo.json` in the working directory or its ancestors. Use `--profile <path>` to select a specific profile. Plugin paths are relative to that file. Use a path string or an object with `path` and `config`. Allo resolves declared service dependencies even when a consumer is listed first.
 
 ## Save and restore
 
@@ -93,6 +147,6 @@ allo catalog remove sample
 
 The example uses bundled Jira as a dependency. On an empty profile, enable it with `allo plugin add bundled/jira`. For a local plugin, use `allo plugin add ./plugins/example.ts`. Local paths are relative to the selected profile. Choose a qualified catalog name whenever a short name matches more than one catalog. Use `--release <version>` to install a particular compatible release.
 
-The [sample catalog](examples/catalog/catalog.json) can seed a separate catalog repository. Each release declares its SemVer version, the compatible Allo version range, the source URL or path, the SHA-256 of the exact source bytes, and any required plugin IDs. The current artifact format is a standalone TypeScript file with built-in Node imports and Cordis service injection. Publish a new version and digest when the source changes.
+The [sample catalog](examples/catalog/catalog.json) can seed a separate catalog repository. Each release declares its SemVer version, the compatible Allo version range, the source URL or path, the SHA-256 of the exact source bytes, and any required plugin IDs. A release is a standalone TypeScript file that can use Node built-ins and services provided by enabled plugins. Publish a new version and digest when the source changes.
 
 Install verifies the digest and pins the release in the profile. Update follows the original catalog. Remove disables the plugin in the selected profile and reports any declared dependents. Cached releases stay on disk so a failed profile change cannot remove an enabled revision. Snapshots carry the pinned source and can run without contacting the catalog.
